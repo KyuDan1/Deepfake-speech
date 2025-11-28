@@ -1,3 +1,4 @@
+#%%
 import torch
 import torchaudio
 import numpy as np
@@ -64,3 +65,5 @@ labels = [] # 0: Real, 1: Fake
 # plt.scatter(X_pca[labels==1, 0], X_pca[labels==1, 1], c='red', label='Fake')
 # plt.legend()
 # plt.show()
+
+# %%
