@@ -208,13 +208,14 @@ data/
 ## 5. 실행 방법
 
 ### 5.1 데이터셋 준비
+
 ```bash
 conda activate deepfake_speech
 
 # 1. 데이터셋 다운로드
 python download_datasets.py --dataset all --parallel
 ```
-
+단, asvspoof5 실행 시에는 압축 해제 필요. 
 ### 5.2 Cross-Dataset 평가 실행
 
 `cross_dataset_eval.py`는 Jupyter Notebook 형식의 Python 스크립트입니다.
@@ -234,6 +235,26 @@ jupyter notebook cross_dataset_eval.py
 ```bash
 conda activate deepfake_speech
 python cross_dataset_eval.py
+```
+
+#### 방법 2: Python 스크립트로 실행 (원하는 데이터로 학습 가능.)
+```bash
+conda activate deepfake_speech
+python cross_dataset_eval_argparse.py
+# 학습 예시
+python cross_dataset_eval_argparse.py --train-data asvspoof2019
+python cross_dataset_eval_argparse.py --train-data asvspoof5
+python cross_dataset_eval_argparse.py --train-data both
+python cross_dataset_eval_argparse.py --train-data both --layerwise --attack-eval
+
+# Model selection examples:
+python cross_dataset_eval_argparse.py --models wavlm si              # Only WavLM and SI detectors
+python cross_dataset_eval_argparse.py --models rawnet2 aasist        # Only RawNet2 and AASIST
+python cross_dataset_eval_argparse.py --models si -n 10 16           # SI detectors with n=10,16
+
+# Custom weights:
+python cross_dataset_eval_argparse.py --models rawnet2 --rawnet2-weights /path/to/weights.pth
+python cross_dataset_eval_argparse.py --models aasist --aasist-weights /path/to/weights.pth
 ```
 
 #### 방법 3: VS Code에서 실행
