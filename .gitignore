@@ -2,4 +2,6 @@ _results
 .vscode
 cache/
 data/
-models/
+models/*
+!models/asvspoof2021_baseline/
+!models/rawnet2_asvspoof5/

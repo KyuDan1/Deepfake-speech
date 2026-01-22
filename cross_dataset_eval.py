@@ -79,10 +79,19 @@ class Config:
     LA_DEV_AUDIO = LA_ROOT / "ASVspoof2019_LA_dev" / "flac"
     LA_EVAL_AUDIO = LA_ROOT / "ASVspoof2019_LA_eval" / "flac"
     LA_PROTOCOLS = LA_ROOT / "ASVspoof2019_LA_cm_protocols"
-    
+
+    # ASVspoof5
+    ASVSPOOF5_ROOT = Path("/mnt/tmp/Deepfake-speech/data/ASVspoof5")
+    ASVSPOOF5_TRAIN_AUDIO = ASVSPOOF5_ROOT / "flac_T"
+    ASVSPOOF5_DEV_AUDIO = ASVSPOOF5_ROOT / "flac_D"
+    ASVSPOOF5_EVAL_AUDIO = ASVSPOOF5_ROOT / "flac_E_eval"
+    ASVSPOOF5_TRAIN_PROTOCOL = ASVSPOOF5_ROOT / "ASVspoof5.train.tsv"
+    ASVSPOOF5_DEV_PROTOCOL = ASVSPOOF5_ROOT / "ASVspoof5.dev.track_1.tsv"
+    ASVSPOOF5_EVAL_PROTOCOL = ASVSPOOF5_ROOT / "ASVspoof5.eval.track_1.tsv"
+
     # ASVspoof2021 DF (다운로드 필요)
     DF_ROOT = Path("/mnt/tmp/Deepfake-speech/data/ASVspoof2021")
-    
+
     # WaveFake (다운로드 필요)
     WAVEFAKE_ROOT = Path("/mnt/tmp/Deepfake-speech/data/WaveFake")
 
@@ -94,12 +103,19 @@ class Config:
     RAWNET2_DIR = MODELS_DIR / "avsspoof2021_baseline/2021/DF/Baseline-RawNet2"  # 경로 수정
     AASIST_DIR = MODELS_DIR / "aasist"
     TRAINED_DIR = MODELS_DIR / "trained"
-    
+
     # Results
     RESULTS_DIR = Path("/mnt/tmp/Deepfake-speech/results")
-    
+
     # Feature cache
     CACHE_DIR = Path("/mnt/tmp/Deepfake-speech/cache")
+
+
+# =============================================================================
+# Training Data Option (학습 데이터 선택)
+# =============================================================================
+# Options: "asvspoof2019", "asvspoof5", "both"
+TRAINING_DATA_OPTION = "asvspoof2019"  # 기본값: ASVspoof2019 LA만 사용
 
 # Create directories
 Config.TRAINED_DIR.mkdir(parents=True, exist_ok=True)
@@ -205,6 +221,152 @@ def get_asvspoof19_datasets() -> Dict[str, pd.DataFrame]:
     )
     
     return datasets
+
+
+# 2.1.1 ASVspoof5 DataLoader
+
+def load_asvspoof5_protocol(protocol_path: str) -> pd.DataFrame:
+    """
+    ASVspoof5 protocol 파일을 로드합니다.
+
+    ASVspoof5 TSV Format (train):
+    SPEAKER_ID FILE_ID GENDER - - - CODEC ATTACK_TYPE LABEL -
+
+    ASVspoof5 TSV Format (eval):
+    SPEAKER_ID FILE_ID GENDER COMPRESSION QUALITY SOURCE_FILE CODEC ATTACK_TYPE LABEL -
+    """
+    data = []
+
+    with open(protocol_path, 'r') as f:
+        for line in f:
+            parts = line.strip().split('\t')
+            if len(parts) >= 9:
+                speaker_id = parts[0]
+                file_id = parts[1]
+                gender = parts[2]
+                codec = parts[6]
+                attack_type = parts[7]
+                label = parts[8]
+
+                data.append({
+                    'speaker_id': speaker_id,
+                    'file_id': file_id,
+                    'gender': gender,
+                    'codec': codec,
+                    'attack_type': attack_type,
+                    'label': label
+                })
+
+    df = pd.DataFrame(data)
+    return df
+
+
+def build_asvspoof5_dataframe(
+    protocol_path: str,
+    audio_dir: str,
+    audio_extension: str = '.flac'
+) -> pd.DataFrame:
+    """ASVspoof5 데이터셋 DataFrame을 생성합니다."""
+    df = load_asvspoof5_protocol(protocol_path)
+
+    # Binary label 생성 (0: bonafide/real, 1: spoof/fake)
+    df['binary_label'] = df['label'].apply(lambda x: 0 if x == 'bonafide' else 1)
+
+    # Audio path 생성
+    audio_dir = Path(audio_dir)
+    df['audio_path'] = df['file_id'].apply(lambda x: str(audio_dir / f"{x}{audio_extension}"))
+
+    # 파일 존재 여부 확인
+    df['exists'] = df['audio_path'].apply(lambda x: Path(x).exists())
+
+    missing_count = (~df['exists']).sum()
+    if missing_count > 0:
+        print(f"Warning: {missing_count} audio files not found")
+
+    # 존재하는 파일만 유지
+    df = df[df['exists']].copy()
+    df = df.drop(columns=['exists'])
+
+    return df
+
+
+def get_asvspoof5_datasets() -> Dict[str, pd.DataFrame]:
+    """
+    ASVspoof5 train/dev/eval 데이터셋 로드
+    """
+    datasets = {}
+
+    # Train
+    if Config.ASVSPOOF5_TRAIN_PROTOCOL.exists() and Config.ASVSPOOF5_TRAIN_AUDIO.exists():
+        print("Loading ASVspoof5 train...")
+        datasets['train'] = build_asvspoof5_dataframe(
+            protocol_path=str(Config.ASVSPOOF5_TRAIN_PROTOCOL),
+            audio_dir=str(Config.ASVSPOOF5_TRAIN_AUDIO)
+        )
+    else:
+        print("Warning: ASVspoof5 train data not found")
+
+    # Dev
+    if Config.ASVSPOOF5_DEV_PROTOCOL.exists() and Config.ASVSPOOF5_DEV_AUDIO.exists():
+        print("Loading ASVspoof5 dev...")
+        datasets['dev'] = build_asvspoof5_dataframe(
+            protocol_path=str(Config.ASVSPOOF5_DEV_PROTOCOL),
+            audio_dir=str(Config.ASVSPOOF5_DEV_AUDIO)
+        )
+    else:
+        print("Warning: ASVspoof5 dev data not found")
+
+    # Eval
+    if Config.ASVSPOOF5_EVAL_PROTOCOL.exists() and Config.ASVSPOOF5_EVAL_AUDIO.exists():
+        print("Loading ASVspoof5 eval...")
+        datasets['eval'] = build_asvspoof5_dataframe(
+            protocol_path=str(Config.ASVSPOOF5_EVAL_PROTOCOL),
+            audio_dir=str(Config.ASVSPOOF5_EVAL_AUDIO)
+        )
+    else:
+        print("Warning: ASVspoof5 eval data not found")
+
+    return datasets
+
+
+def get_combined_training_data(option: str = "asvspoof2019") -> Tuple[pd.DataFrame, str]:
+    """
+    학습 데이터를 선택하여 로드합니다.
+
+    Args:
+        option: "asvspoof2019", "asvspoof5", "both"
+
+    Returns:
+        (combined_df, cache_suffix) - 학습용 DataFrame과 캐시 파일 접미사
+    """
+    dfs = []
+    cache_suffix_parts = []
+
+    if option in ["asvspoof2019", "both"]:
+        asvspoof19 = get_asvspoof19_datasets()
+        if 'train' in asvspoof19:
+            dfs.append(asvspoof19['train'])
+            cache_suffix_parts.append("la19")
+            print(f"  ASVspoof2019 LA train: {len(asvspoof19['train'])} samples")
+
+    if option in ["asvspoof5", "both"]:
+        asvspoof5 = get_asvspoof5_datasets()
+        if 'train' in asvspoof5:
+            dfs.append(asvspoof5['train'])
+            cache_suffix_parts.append("spoof5")
+            print(f"  ASVspoof5 train: {len(asvspoof5['train'])} samples")
+
+    if len(dfs) == 0:
+        raise ValueError(f"No training data found for option: {option}")
+
+    combined_df = pd.concat(dfs, ignore_index=True)
+    cache_suffix = "_".join(cache_suffix_parts)
+
+    print(f"  Combined training data: {len(combined_df)} samples")
+    print(f"  Bonafide: {(combined_df['binary_label'] == 0).sum()}, Spoof: {(combined_df['binary_label'] == 1).sum()}")
+
+    return combined_df, cache_suffix
+
 
 # %%
 # ASVspoof2019 LA 데이터 로드
@@ -899,6 +1061,239 @@ class WavLMFeatureExtractor:
             print(f"Features cached to {cache_path}")
         
         return features
+
+
+# 3.1.1 WavLM Layer-wise Feature Extractor
+
+class WavLMLayerwiseExtractor:
+    """
+    WavLM-Large 모델의 모든 레이어에서 feature를 추출합니다.
+
+    WavLM-Large 구조:
+    - 1 CNN feature extractor embedding (layer 0)
+    - 24 transformer layers (layers 1-24)
+    - Total: 25 hidden states when output_hidden_states=True
+    - hidden_size: 1024
+    """
+
+    def __init__(self, model_name: str = "microsoft/wavlm-large", device: str = None):
+        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.model_name = model_name
+
+        print(f"Loading WavLM model (layer-wise): {model_name}...")
+        self.feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(model_name)
+        self.model = WavLMModel.from_pretrained(model_name).to(self.device)
+        self.model.eval()
+
+        for param in self.model.parameters():
+            param.requires_grad = False
+
+        self.num_layers = 25  # 0=embedding, 1-24=transformer layers
+        self.hidden_size = 1024
+
+        print(f"WavLM (layer-wise) loaded on {self.device}")
+        print(f"  Total hidden states: {self.num_layers}")
+
+    def extract_all_layers(self, audio_path: str) -> Optional[np.ndarray]:
+        """
+        오디오 파일에서 모든 레이어의 feature를 추출합니다.
+
+        Returns:
+            np.ndarray of shape (25, 1024) - all layers at once
+        """
+        try:
+            audio, _ = librosa.load(audio_path, sr=16000, mono=True)
+            inputs = self.feature_extractor(audio, sampling_rate=16000, return_tensors="pt", padding=True)
+            input_values = inputs.input_values.to(self.device)
+
+            with torch.no_grad():
+                outputs = self.model(input_values, output_hidden_states=True, return_dict=True)
+
+            all_hidden = torch.stack(outputs.hidden_states, dim=0)  # (25, batch, time, 1024)
+            pooled = all_hidden.mean(dim=2).squeeze(1)  # (25, 1024)
+
+            return pooled.cpu().numpy()
+
+        except Exception as e:
+            print(f"Feature extraction error for {audio_path}: {e}")
+            return None
+
+    def extract_batch_all_layers(
+        self,
+        audio_paths: List[str],
+        cache_prefix: Optional[str] = None,
+        desc: str = "Extracting all layers"
+    ) -> np.ndarray:
+        """
+        모든 오디오 파일에서 모든 레이어의 feature를 한 번에 추출합니다.
+
+        Returns:
+            np.ndarray of shape (N_samples, 25, 1024)
+        """
+        # Check cache
+        all_cached = True
+        if cache_prefix:
+            for layer_idx in range(self.num_layers):
+                cache_path = f"{cache_prefix}_layer_{layer_idx}.pkl"
+                if not Path(cache_path).exists():
+                    all_cached = False
+                    break
+        else:
+            all_cached = False
+
+        if all_cached:
+            print(f"Loading cached features from {cache_prefix}_layer_*.pkl")
+            all_features = []
+            for layer_idx in range(self.num_layers):
+                cache_path = f"{cache_prefix}_layer_{layer_idx}.pkl"
+                with open(cache_path, 'rb') as f:
+                    layer_features = pickle.load(f)
+                all_features.append(layer_features)
+            all_features = np.stack(all_features, axis=1)  # (N, 25, 1024)
+            print(f"  Loaded shape: {all_features.shape}")
+            return all_features
+
+        print(f"Extracting features for {len(audio_paths)} files...")
+        all_features = []
+        for path in tqdm(audio_paths, desc=desc):
+            layer_features = self.extract_all_layers(path)
+            if layer_features is not None:
+                all_features.append(layer_features)
+            else:
+                all_features.append(np.zeros((self.num_layers, self.hidden_size)))
+        all_features = np.array(all_features)  # (N, 25, 1024)
+
+        # Save cache per layer
+        if cache_prefix:
+            Path(cache_prefix).parent.mkdir(parents=True, exist_ok=True)
+            for layer_idx in range(self.num_layers):
+                cache_path = f"{cache_prefix}_layer_{layer_idx}.pkl"
+                layer_data = all_features[:, layer_idx, :]  # (N, 1024)
+                with open(cache_path, 'wb') as f:
+                    pickle.dump(layer_data, f)
+            print(f"Features cached to {cache_prefix}_layer_*.pkl")
+
+        return all_features
+
+
+# 3.1.2 Layer-wise Speaker-Invariant Detector
+
+class LayerwiseSpeakerInvariantDetector:
+    """
+    특정 WavLM 레이어의 feature를 사용하는 Speaker-Invariant Detector
+
+    Pipeline:
+    1. StandardScaler normalization
+    2. Speaker centroid computation
+    3. PCA on centroids -> speaker subspace
+    4. Orthogonal projection: P_perp = I - U @ U.T
+    5. LogisticRegression classification
+    """
+
+    def __init__(self, layer_idx: int, n_speaker_components: int = 10):
+        self.layer_idx = layer_idx
+        self.n_speaker_components = n_speaker_components
+
+        self.scaler = StandardScaler()
+        self.pca = None
+        self.projection_matrix = None
+        self.classifier = LogisticRegression(random_state=42, solver='liblinear', max_iter=1000)
+        self.is_fitted = False
+
+    def fit(
+        self,
+        X_features: np.ndarray,
+        labels: List[int],
+        speaker_ids: List[str]
+    ) -> float:
+        """
+        Pre-extracted features로 학습합니다.
+
+        Args:
+            X_features: (N, 1024) pre-extracted features
+            labels: Binary labels (0: bonafide, 1: spoof)
+            speaker_ids: Speaker IDs for centroid computation
+
+        Returns:
+            Training accuracy
+        """
+        y = np.array(labels)
+
+        # 1. Scale features
+        X_scaled = self.scaler.fit_transform(X_features)
+
+        # 2. Compute speaker centroids
+        spk_map = {}
+        for idx, spk in enumerate(speaker_ids):
+            if spk not in spk_map:
+                spk_map[spk] = []
+            spk_map[spk].append(idx)
+
+        speaker_centroids = []
+        for spk, indices in spk_map.items():
+            centroid = np.mean(X_scaled[indices], axis=0)
+            speaker_centroids.append(centroid)
+        speaker_centroids = np.array(speaker_centroids)
+
+        # 3. PCA on centroids
+        n_components = min(self.n_speaker_components, len(speaker_centroids) - 1)
+        self.pca = PCA(n_components=n_components)
+        self.pca.fit(speaker_centroids)
+
+        # 4. Orthogonal projection matrix: P_perp = I - U @ U.T
+        U = self.pca.components_.T  # (1024, n_components)
+        I = np.eye(U.shape[0])
+        self.projection_matrix = I - (U @ U.T)
+
+        # 5. Project features and train classifier
+        X_projected = X_scaled @ self.projection_matrix
+        self.classifier.fit(X_projected, y)
+        self.is_fitted = True
+
+        return self.classifier.score(X_projected, y)
+
+    def predict_batch(self, X_features: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Pre-extracted features로 예측합니다.
+        """
+        if not self.is_fitted:
+            raise ValueError("Model not fitted. Call fit() first.")
+
+        X_scaled = self.scaler.transform(X_features)
+        X_projected = X_scaled @ self.projection_matrix
+
+        predictions = self.classifier.predict(X_projected)
+        probabilities = self.classifier.predict_proba(X_projected)
+        scores = probabilities[:, 1]  # Spoof probability
+
+        return predictions, scores
+
+    def save(self, path: str):
+        """모델 저장"""
+        save_data = {
+            'layer_idx': self.layer_idx,
+            'n_speaker_components': self.n_speaker_components,
+            'scaler': self.scaler,
+            'pca': self.pca,
+            'projection_matrix': self.projection_matrix,
+            'classifier': self.classifier,
+            'is_fitted': self.is_fitted
+        }
+        with open(path, 'wb') as f:
+            pickle.dump(save_data, f)
+
+    def load(self, path: str):
+        """모델 로드"""
+        with open(path, 'rb') as f:
+            save_data = pickle.load(f)
+        self.layer_idx = save_data['layer_idx']
+        self.n_speaker_components = save_data['n_speaker_components']
+        self.scaler = save_data['scaler']
+        self.pca = save_data['pca']
+        self.projection_matrix = save_data['projection_matrix']
+        self.classifier = save_data['classifier']
+        self.is_fitted = save_data['is_fitted']
+
 
 # %%
 # 3.2 WavLM Frozen Baseline
@@ -1873,8 +2268,26 @@ print("Initializing shared WavLM Feature Extractor...")
 wavlm_extractor = WavLMFeatureExtractor(device=device)
 
 # %%
-# 5.2 Prepare Training Data
-train_df = asvspoof19_data['train']
+# 5.2 Prepare Training Data (TRAINING_DATA_OPTION에 따라 선택)
+print("\n" + "="*80)
+print(f"Preparing Training Data: {TRAINING_DATA_OPTION}")
+print("="*80)
+
+if TRAINING_DATA_OPTION == "asvspoof2019":
+    train_df = asvspoof19_data['train']
+elif TRAINING_DATA_OPTION == "asvspoof5":
+    asvspoof5_data_loaded = get_asvspoof5_datasets()
+    if 'train' not in asvspoof5_data_loaded:
+        raise ValueError("ASVspoof5 train data not found!")
+    train_df = asvspoof5_data_loaded['train']
+elif TRAINING_DATA_OPTION == "both":
+    asvspoof5_data_loaded = get_asvspoof5_datasets()
+    if 'train' not in asvspoof5_data_loaded:
+        raise ValueError("ASVspoof5 train data not found!")
+    train_df = pd.concat([asvspoof19_data['train'], asvspoof5_data_loaded['train']], ignore_index=True)
+    print(f"  Combined: ASVspoof2019 ({len(asvspoof19_data['train'])}) + ASVspoof5 ({len(asvspoof5_data_loaded['train'])})")
+else:
+    raise ValueError(f"Invalid TRAINING_DATA_OPTION: {TRAINING_DATA_OPTION}")
 
 train_audio_paths = train_df['audio_path'].tolist()
 train_labels = train_df['binary_label'].tolist()
@@ -1889,16 +2302,18 @@ print(f"Speakers: {len(set(train_speaker_ids))}")
 # 5.3 Train WavLM Frozen Baseline
 print("\n" + "="*80)
 print("Training WavLM Frozen Baseline")
+print(f"Training Data: {TRAINING_DATA_OPTION}")
 print("="*80)
 
 wavlm_baseline = WavLMFrozenBaseline(wavlm_extractor=wavlm_extractor, device=device)
 
-train_cache_path = str(Config.CACHE_DIR / "asvspoof19_train_wavlm_features.pkl")
-wavlm_model_path = Config.TRAINED_DIR / "wavlm_frozen_baseline.pkl"
-# wavlm_baseline.fit(train_audio_paths, train_labels, cache_path=train_cache_path)
+# 학습 데이터 옵션에 따라 캐시/모델 경로 설정
+train_cache_path = str(Config.CACHE_DIR / f"train_{TRAINING_DATA_OPTION}_wavlm_features.pkl")
+wavlm_model_path = Config.TRAINED_DIR / f"wavlm_frozen_baseline_{TRAINING_DATA_OPTION}.pkl"
 
-# # Save model
-# wavlm_baseline.save(str(Config.TRAINED_DIR / "wavlm_frozen_baseline.pkl"))
+print(f"  Cache path: {train_cache_path}")
+print(f"  Model path: {wavlm_model_path}")
+
 # 모델 파일이 이미 존재하는지 확인
 if wavlm_model_path.exists():
     print(f"Found existing model at {wavlm_model_path}")
@@ -1915,6 +2330,7 @@ else:
 # 5.4 Train Speaker-Invariant Detectors (multiple n_speaker_components)
 print("\n" + "="*80)
 print("Training Speaker-Invariant Detectors")
+print(f"Training Data: {TRAINING_DATA_OPTION}")
 print("="*80)
 
 n_components_list = [1, 5, 10, 16]
@@ -1924,16 +2340,18 @@ for n in n_components_list:
     print(f"\n{'='*60}")
     print(f"n_speaker_components = {n}")
     print(f"{'='*60}")
-    
+
     detector = SpeakerInvariantDetector(
         n_speaker_components=n,
         wavlm_extractor=wavlm_extractor,
         device=device
     )
-    
-    # 각 n별 모델 경로 설정
-    si_model_path = Config.TRAINED_DIR / f"si_detector_n{n}.pkl"
-    
+
+    # 각 n별 모델 경로 설정 (학습 데이터 옵션 포함)
+    si_model_path = Config.TRAINED_DIR / f"si_detector_n{n}_{TRAINING_DATA_OPTION}.pkl"
+
+    print(f"  Model path: {si_model_path}")
+
     # 모델 파일이 이미 존재하는지 확인
     if si_model_path.exists():
         print(f"Found existing model at {si_model_path}")
@@ -1949,7 +2367,7 @@ for n in n_components_list:
         )
         # Save model
         detector.save(str(si_model_path))
-    
+
     si_detectors[n] = detector
 
 print("\nAll Speaker-Invariant Detectors ready (Loaded or Trained)!")
@@ -2287,21 +2705,33 @@ try:
 except Exception as e:
     print(f"  -> Error loading In-The-Wild: {e}")
 
-# # 4. WaveFake (Generated Speech)
-# print("\n[Loading WaveFake...]")
-# try:
-#     wf_data = get_wavefake_data()
-#     if wf_data is not None and len(wf_data) > 0:
-#         # WaveFake는 데이터가 너무 많으므로 평가 시간을 위해 5,000개만 샘플링 (Optional)
-#         if len(wf_data) > 5000:
-#             wf_data = wf_data.sample(n=5000, random_state=42).reset_index(drop=True)
-#             print("  -> Subsampled to 5,000 samples for faster evaluation.")
-#         datasets_to_eval['WaveFake'] = wf_data
-#         print(f"  -> Loaded {len(wf_data)} samples.")
-#     else:
-#         print("  -> Skipped (Not found or empty).")
-# except Exception as e:
-#     print(f"  -> Error loading WaveFake: {e}")
+# 4. WaveFake (Generated Speech)
+print("\n[Loading WaveFake...]")
+try:
+    wf_data = get_wavefake_data()
+    if wf_data is not None and len(wf_data) > 0:
+        # WaveFake는 데이터가 너무 많으므로 평가 시간을 위해 5,000개만 샘플링 (Optional)
+        if len(wf_data) > 5000:
+            wf_data = wf_data.sample(n=5000, random_state=42).reset_index(drop=True)
+            print("  -> Subsampled to 5,000 samples for faster evaluation.")
+        datasets_to_eval['WaveFake'] = wf_data
+        print(f"  -> Loaded {len(wf_data)} samples.")
+    else:
+        print("  -> Skipped (Not found or empty).")
+except Exception as e:
+    print(f"  -> Error loading WaveFake: {e}")
+
+# 5. ASVspoof5 Eval (New dataset)
+print("\n[Loading ASVspoof5 Eval...]")
+try:
+    asvspoof5_data = get_asvspoof5_datasets()
+    if 'eval' in asvspoof5_data and len(asvspoof5_data['eval']) > 0:
+        datasets_to_eval['ASVspoof5 Eval'] = asvspoof5_data['eval']
+        print(f"  -> Loaded {len(asvspoof5_data['eval'])} samples.")
+    else:
+        print("  -> Skipped (Not found or empty).")
+except Exception as e:
+    print(f"  -> Error loading ASVspoof5: {e}")
 
 print(f"\nTotal datasets for evaluation: {list(datasets_to_eval.keys())}")
 
@@ -2384,9 +2814,10 @@ for dataset_name, df in datasets_to_eval.items():
 # DataFrame 변환
 cross_df = pd.DataFrame(cross_eval_results)
 
-# 결과 저장
-cross_df.to_csv(Config.RESULTS_DIR / "cross_dataset_results.csv", index=False)
-print(f"\nSaved cross-dataset results to {Config.RESULTS_DIR / 'cross_dataset_results.csv'}")
+# 결과 저장 (학습 데이터 옵션 포함)
+cross_result_path = Config.RESULTS_DIR / f"cross_dataset_results_{TRAINING_DATA_OPTION}.csv"
+cross_df.to_csv(cross_result_path, index=False)
+print(f"\nSaved cross-dataset results to {cross_result_path}")
 
 # %%
 # 8.4 결과 시각화 (Visualization)
@@ -2497,6 +2928,358 @@ print("""
    - Error analysis
 """)
 
+# %% [markdown]
+# ## 10. Attack Type-wise EER Evaluation
+#
+# ASVspoof2019 LA eval과 ASVspoof5 eval 데이터셋에 대해 attack type별 EER을 측정합니다.
+
+# %%
+# 10.1 Attack Type-wise EER 평가 함수 정의
+
+def evaluate_attack_type_eer(
+    eval_df: pd.DataFrame,
+    model_predictions: Dict[str, Tuple[np.ndarray, np.ndarray]],
+    dataset_name: str
+) -> pd.DataFrame:
+    """
+    Attack type별 EER을 계산합니다.
+
+    Args:
+        eval_df: 평가 데이터 DataFrame (attack_type 컬럼 필요)
+        model_predictions: {model_name: (predictions, scores)} 딕셔너리
+        dataset_name: 데이터셋 이름
+
+    Returns:
+        DataFrame with attack type-wise EER results
+    """
+    results = []
+
+    # bonafide 샘플 인덱스 (attack_type이 '-' 또는 'bonafide'인 경우)
+    if 'attack_type' not in eval_df.columns:
+        print(f"Warning: {dataset_name} does not have attack_type column")
+        return pd.DataFrame()
+
+    bonafide_mask = (eval_df['attack_type'] == '-') | (eval_df['attack_type'] == 'bonafide')
+    bonafide_indices = np.where(bonafide_mask)[0]
+    bonafide_labels = eval_df.loc[bonafide_mask, 'binary_label'].values
+
+    # 각 attack type별 평가
+    attack_types = [at for at in eval_df['attack_type'].unique() if at not in ['-', 'bonafide']]
+
+    for attack_type in sorted(attack_types):
+        attack_mask = eval_df['attack_type'] == attack_type
+        attack_indices = np.where(attack_mask)[0]
+        attack_labels = eval_df.loc[attack_mask, 'binary_label'].values
+
+        # bonafide + 해당 attack type 조합
+        combined_indices = np.concatenate([bonafide_indices, attack_indices])
+        combined_labels = np.concatenate([bonafide_labels, attack_labels])
+
+        for model_name, (preds, scores) in model_predictions.items():
+            combined_scores = scores[combined_indices]
+
+            # EER 계산
+            if len(np.unique(combined_labels)) >= 2:
+                eer = compute_eer(combined_labels, combined_scores)
+            else:
+                eer = float('nan')
+
+            results.append({
+                'dataset': dataset_name,
+                'model': model_name,
+                'attack_type': attack_type,
+                'n_bonafide': len(bonafide_indices),
+                'n_spoof': len(attack_indices),
+                'eer': eer
+            })
+
+    # Overall EER (전체 데이터)
+    all_labels = eval_df['binary_label'].values
+    for model_name, (preds, scores) in model_predictions.items():
+        eer = compute_eer(all_labels, scores)
+        results.append({
+            'dataset': dataset_name,
+            'model': model_name,
+            'attack_type': 'Overall',
+            'n_bonafide': (all_labels == 0).sum(),
+            'n_spoof': (all_labels == 1).sum(),
+            'eer': eer
+        })
+
+    return pd.DataFrame(results)
+
+
+# %%
+# 10.2 Attack Type-wise EER 평가 실행 (ASVspoof2019 LA Eval)
+
+print("\n" + "="*80)
+print("Attack Type-wise EER Evaluation: ASVspoof2019 LA Eval")
+print("="*80)
+
+# 예측 결과 수집
+la19_predictions = {}
+
+# WavLM Frozen
+if wavlm_baseline.is_fitted:
+    eval_cache_path = str(Config.CACHE_DIR / "asvspoof19_eval_wavlm_features.pkl")
+    _, scores = wavlm_baseline.predict_batch(
+        asvspoof19_data['eval']['audio_path'].tolist(),
+        cache_path=eval_cache_path
+    )
+    la19_predictions['WavLM Frozen'] = (None, scores)
+
+# Speaker-Invariant Detectors
+for n, detector in si_detectors.items():
+    if detector.is_fitted:
+        _, scores = detector.predict_batch(
+            asvspoof19_data['eval']['audio_path'].tolist(),
+            cache_path=eval_cache_path
+        )
+        la19_predictions[f'SI-Detector (n={n})'] = (None, scores)
+
+# RawNet2
+if rawnet2_baseline.is_loaded:
+    _, scores = rawnet2_baseline.predict_batch(asvspoof19_data['eval']['audio_path'].tolist())
+    la19_predictions['RawNet2'] = (None, scores)
+
+# AASIST
+if aasist_baseline.is_loaded:
+    _, scores = aasist_baseline.predict_batch(asvspoof19_data['eval']['audio_path'].tolist())
+    la19_predictions['AASIST'] = (None, scores)
+
+# Attack type-wise EER 계산
+attack_eer_la19 = evaluate_attack_type_eer(
+    asvspoof19_data['eval'],
+    la19_predictions,
+    'ASVspoof2019 LA'
+)
+
+if not attack_eer_la19.empty:
+    # 결과 출력 (피벗 테이블)
+    pivot_la19 = attack_eer_la19.pivot(index='attack_type', columns='model', values='eer')
+    print("\n[ASVspoof2019 LA - Attack Type-wise EER (%)]")
+    print(pivot_la19.round(2).to_string())
+
+    # 결과 저장 (학습 데이터 옵션 포함)
+    attack_la19_path = Config.RESULTS_DIR / f"attack_type_eer_asvspoof19_{TRAINING_DATA_OPTION}.csv"
+    attack_eer_la19.to_csv(attack_la19_path, index=False)
+    print(f"\nResults saved to {attack_la19_path}")
+
+
+# %%
+# 10.3 Attack Type-wise EER 평가 실행 (ASVspoof5 Eval)
+
+print("\n" + "="*80)
+print("Attack Type-wise EER Evaluation: ASVspoof5 Eval")
+print("="*80)
+
+try:
+    asvspoof5_datasets = get_asvspoof5_datasets()
+
+    if 'eval' in asvspoof5_datasets and len(asvspoof5_datasets['eval']) > 0:
+        asvspoof5_eval = asvspoof5_datasets['eval']
+        asvspoof5_audio_paths = asvspoof5_eval['audio_path'].tolist()
+
+        # 예측 결과 수집
+        spoof5_predictions = {}
+
+        # 캐시 경로
+        spoof5_cache_path = str(Config.CACHE_DIR / "asvspoof5_eval_wavlm_features.pkl")
+
+        # WavLM Frozen
+        if wavlm_baseline.is_fitted:
+            print("  Predicting with WavLM Frozen...")
+            _, scores = wavlm_baseline.predict_batch(asvspoof5_audio_paths, cache_path=spoof5_cache_path)
+            spoof5_predictions['WavLM Frozen'] = (None, scores)
+
+        # Speaker-Invariant Detectors
+        for n, detector in si_detectors.items():
+            if detector.is_fitted:
+                print(f"  Predicting with SI-Detector (n={n})...")
+                _, scores = detector.predict_batch(asvspoof5_audio_paths, cache_path=spoof5_cache_path)
+                spoof5_predictions[f'SI-Detector (n={n})'] = (None, scores)
+
+        # RawNet2
+        if rawnet2_baseline.is_loaded:
+            print("  Predicting with RawNet2...")
+            _, scores = rawnet2_baseline.predict_batch(asvspoof5_audio_paths)
+            spoof5_predictions['RawNet2'] = (None, scores)
+
+        # AASIST
+        if aasist_baseline.is_loaded:
+            print("  Predicting with AASIST...")
+            _, scores = aasist_baseline.predict_batch(asvspoof5_audio_paths)
+            spoof5_predictions['AASIST'] = (None, scores)
+
+        # Attack type-wise EER 계산
+        attack_eer_spoof5 = evaluate_attack_type_eer(
+            asvspoof5_eval,
+            spoof5_predictions,
+            'ASVspoof5 Eval'
+        )
+
+        if not attack_eer_spoof5.empty:
+            # 결과 출력 (피벗 테이블)
+            pivot_spoof5 = attack_eer_spoof5.pivot(index='attack_type', columns='model', values='eer')
+            print("\n[ASVspoof5 Eval - Attack Type-wise EER (%)]")
+            print(pivot_spoof5.round(2).to_string())
+
+            # 결과 저장 (학습 데이터 옵션 포함)
+            attack_spoof5_path = Config.RESULTS_DIR / f"attack_type_eer_asvspoof5_{TRAINING_DATA_OPTION}.csv"
+            attack_eer_spoof5.to_csv(attack_spoof5_path, index=False)
+            print(f"\nResults saved to {attack_spoof5_path}")
+    else:
+        print("  ASVspoof5 eval data not available.")
+
+except Exception as e:
+    print(f"  Error during ASVspoof5 evaluation: {e}")
+    import traceback
+    traceback.print_exc()
+
+
+# %% [markdown]
+# ## 11. Layer-wise Speaker-Invariant Evaluation
+#
+# WavLM의 모든 레이어(0-24)에서 feature를 추출하여 layer별 Speaker-Invariant Detector를 평가합니다.
+
+# %%
+# 11.1 Layer-wise Feature Extraction 및 Detector 학습
+
+print("\n" + "="*80)
+print("Layer-wise Speaker-Invariant Detector Evaluation")
+print(f"Training Data: {TRAINING_DATA_OPTION}")
+print("="*80)
+
+# Layer-wise extractor 초기화 (WavLM 공유 가능)
+print("\nInitializing WavLM Layer-wise Extractor...")
+layerwise_extractor = WavLMLayerwiseExtractor(device=device)
+
+NUM_LAYERS = 25
+N_SPEAKER_COMPONENTS = 10
+
+# 학습 데이터 feature 추출 (학습 데이터 옵션에 따라 캐시 경로 설정)
+print("\n[Extracting training features (all layers)]")
+train_layerwise_cache = str(Config.CACHE_DIR / f"train_{TRAINING_DATA_OPTION}")
+print(f"  Cache prefix: {train_layerwise_cache}")
+
+train_features_all = layerwise_extractor.extract_batch_all_layers(
+    train_audio_paths,  # 이미 TRAINING_DATA_OPTION에 따라 설정된 train_audio_paths 사용
+    cache_prefix=train_layerwise_cache,
+    desc="Extracting train features"
+)
+print(f"  Train features shape: {train_features_all.shape}")
+
+# Layer별 detector 학습
+print("\n[Training layer-wise detectors]")
+layerwise_detectors = {}
+
+for layer_idx in tqdm(range(NUM_LAYERS), desc="Training detectors"):
+    # 학습 데이터 옵션 포함한 모델 경로
+    detector_path = Config.TRAINED_DIR / f"si_detector_layer_{layer_idx}_{TRAINING_DATA_OPTION}.pkl"
+
+    detector = LayerwiseSpeakerInvariantDetector(
+        layer_idx=layer_idx,
+        n_speaker_components=N_SPEAKER_COMPONENTS
+    )
+
+    if detector_path.exists():
+        detector.load(str(detector_path))
+    else:
+        train_acc = detector.fit(
+            train_features_all[:, layer_idx, :],
+            train_labels,
+            train_speaker_ids
+        )
+        detector.save(str(detector_path))
+
+    layerwise_detectors[layer_idx] = detector
+
+print(f"  Trained/loaded {len(layerwise_detectors)} layer-wise detectors")
+
+# %%
+# 11.2 Layer-wise 평가 (모든 cross-dataset)
+
+print("\n[Evaluating layer-wise detectors on all datasets]")
+
+layerwise_results = []
+
+for dataset_name, df in datasets_to_eval.items():
+    print(f"\n  === {dataset_name} ({len(df)} samples) ===")
+
+    audio_paths = df['audio_path'].tolist()
+    labels = np.array(df['binary_label'].tolist())
+
+    # Extract layer-wise features
+    safe_name = dataset_name.lower().replace(" ", "_").replace("-", "_")
+    eval_cache_prefix = str(Config.CACHE_DIR / safe_name)
+
+    eval_features_all = layerwise_extractor.extract_batch_all_layers(
+        audio_paths,
+        cache_prefix=eval_cache_prefix,
+        desc=f"Extracting {dataset_name}"
+    )
+
+    # Evaluate each layer
+    for layer_idx in range(NUM_LAYERS):
+        _, scores = layerwise_detectors[layer_idx].predict_batch(
+            eval_features_all[:, layer_idx, :]
+        )
+        eer = compute_eer(labels, scores)
+
+        layerwise_results.append({
+            'dataset': dataset_name,
+            'layer': layer_idx,
+            'eer': eer
+        })
+
+    # Print best layer for this dataset
+    dataset_results = [r for r in layerwise_results if r['dataset'] == dataset_name]
+    best_layer = min(dataset_results, key=lambda x: x['eer'])
+    print(f"    Best layer: {best_layer['layer']} (EER: {best_layer['eer']:.2f}%)")
+
+# %%
+# 11.3 Layer-wise 결과 저장 및 시각화
+
+layerwise_df = pd.DataFrame(layerwise_results)
+
+# 결과 저장 (학습 데이터 옵션 포함)
+layerwise_result_path = Config.RESULTS_DIR / f"layerwise_si_results_{TRAINING_DATA_OPTION}.csv"
+layerwise_df.to_csv(layerwise_result_path, index=False)
+print(f"\nLayer-wise results saved to {layerwise_result_path}")
+
+# 피벗 테이블
+pivot_layerwise = layerwise_df.pivot(index='layer', columns='dataset', values='eer')
+print("\n[Layer-wise EER (%) by Dataset]")
+print(pivot_layerwise.round(2).to_string())
+
+# 시각화
+if len(datasets_to_eval) > 0:
+    fig, ax = plt.subplots(figsize=(14, 6))
+
+    for dataset_name in datasets_to_eval.keys():
+        dataset_data = layerwise_df[layerwise_df['dataset'] == dataset_name]
+        ax.plot(dataset_data['layer'], dataset_data['eer'], marker='o', label=dataset_name)
+
+    ax.set_xlabel('WavLM Layer Index')
+    ax.set_ylabel('EER (%)')
+    ax.set_title('Layer-wise Speaker-Invariant Detector: EER by Layer')
+    ax.legend()
+    ax.grid(True, linestyle='--', alpha=0.5)
+    ax.set_xticks(range(NUM_LAYERS))
+
+    plt.tight_layout()
+    layerwise_plot_path = Config.RESULTS_DIR / f"layerwise_si_eer_plot_{TRAINING_DATA_OPTION}.png"
+    plt.savefig(layerwise_plot_path, dpi=300)
+    plt.show()
+    print(f"Plot saved to {layerwise_plot_path}")
+
+# Best layer summary
+print("\n[Best Layer Summary]")
+for dataset_name in datasets_to_eval.keys():
+    subset = layerwise_df[layerwise_df['dataset'] == dataset_name]
+    best_idx = subset['eer'].idxmin()
+    best_row = subset.loc[best_idx]
+    print(f"  {dataset_name}: Layer {int(best_row['layer'])} (EER: {best_row['eer']:.2f}%)")
 
 
 # %%

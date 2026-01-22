@@ -334,6 +334,81 @@ def download_wavefake(data_dir: Path):
     print("=" * 70)
     return success
 
+def download_asvspoof5(data_dir: Path):
+    """
+    Download ASVspoof 5 dataset via Hugging Face CLI
+    Target: https://huggingface.co/datasets/jungjee/asvspoof5
+    """
+    print("=" * 70)
+    print("[ASVspoof5] Starting download via Hugging Face CLI...")
+    print("=" * 70)
+
+    target_dir = data_dir / "ASVspoof5"
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Download via Hugging Face CLI
+    print(f"[ASVspoof5] [1/2] Downloading from Hugging Face...")
+    
+    # Check if huggingface-cli exists
+    if shutil.which("huggingface-cli") is None:
+        print("[ASVspoof5]   [ERROR] 'huggingface-cli' not found.")
+        print("[ASVspoof5]   Please install it: pip install -U 'huggingface_hub[cli]'")
+        return False
+
+    try:
+        # --local-dir-use-symlinks False: 실제 파일을 다운로드 (심볼릭 링크 X)
+        cmd = [
+            "huggingface-cli", "download",
+            "jungjee/asvspoof5",
+            "--repo-type", "dataset",
+            "--local-dir", str(target_dir),
+            "--local-dir-use-symlinks", "False" 
+        ]
+        
+        # 실행 (인증이 필요한 경우 터미널에서 'huggingface-cli login' 선행 필요)
+        subprocess.run(cmd, check=True)
+        print("[ASVspoof5]   [OK] Download complete")
+
+    except subprocess.CalledProcessError as e:
+        print(f"[ASVspoof5]   [ERROR] Download failed (Code: {e.returncode}).")
+        print("[ASVspoof5]   [TIP] 비공개 데이터셋이라면 'huggingface-cli login'을 했는지 확인하세요.")
+        return False
+
+    # 2. Extract Archives (if any exist)
+    print("\n[ASVspoof5] [2/2] Checking for compressed files to extract...")
+    
+    # 지원하는 압축 포맷
+    archives = []
+    archives.extend(list(target_dir.glob("**/*.tar.gz")))
+    archives.extend(list(target_dir.glob("**/*.zip")))
+
+    if not archives:
+        print("[ASVspoof5]   No compressed files found. Assuming files are already raw audio.")
+    else:
+        for archive_path in archives:
+            print(f"[ASVspoof5]   Extracting {archive_path.name}...")
+            try:
+                # tar.gz 처리
+                if archive_path.name.endswith(".tar.gz"):
+                    with tarfile.open(archive_path, 'r:gz') as tar:
+                        tar.extractall(archive_path.parent)
+                # zip 처리
+                elif archive_path.name.endswith(".zip"):
+                    with zipfile.ZipFile(archive_path, 'r') as zf:
+                        zf.extractall(archive_path.parent)
+                
+                print(f"[ASVspoof5]   [OK] Extracted {archive_path.name}")
+                
+                # (선택 사항) 압축 해제 후 원본 삭제를 원하면 아래 주석 해제
+                # archive_path.unlink() 
+
+            except Exception as e:
+                print(f"[ASVspoof5]   [WARNING] Failed to extract {archive_path.name}: {e}")
+
+    print("\n" + "=" * 70)
+    print("[ASVspoof5] Process complete!")
+    print("=" * 70)
+    return True
 
 # =========================================================================
 # Parallel wrappers
@@ -363,6 +438,13 @@ def _download_wavefake_wrapper(data_dir_str: str, result_queue: Queue):
         print(f"[WaveFake] Error: {e}")
         result_queue.put(("wavefake", False))
 
+def _download_asvspoof5_wrapper(data_dir_str: str, result_queue: Queue):
+    try:
+        result = download_asvspoof5(Path(data_dir_str))
+        result_queue.put(("asvspoof5", result))
+    except Exception as e:
+        print(f"[ASVspoof5] Error: {e}")
+        result_queue.put(("asvspoof5", False))
 
 def download_all_parallel(data_dir: Path, datasets: list):
     """Dataset-level parallel download"""
@@ -377,6 +459,7 @@ def download_all_parallel(data_dir: Path, datasets: list):
         "asvspoof2021": _download_asvspoof2021_wrapper,
         "inthewild": _download_inthewild_wrapper,
         "wavefake": _download_wavefake_wrapper,
+        "asvspoof5": _download_asvspoof5_wrapper,  # <--- 추가됨
     }
 
     for ds in datasets:
@@ -399,7 +482,7 @@ def download_all_parallel(data_dir: Path, datasets: list):
 def main():
     parser = argparse.ArgumentParser(description="Deepfake Audio Dataset Downloader")
     parser.add_argument("--dataset", "-d", required=True, 
-                        choices=["all", "asvspoof2021", "inthewild", "wavefake"])
+                        choices=["all", "asvspoof2021", "inthewild", "wavefake", "asvspoof5"])
     parser.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR))
     parser.add_argument("--parallel", "-p", action="store_true", 
                         help="Enable dataset-level parallelism")
@@ -411,7 +494,7 @@ def main():
     print(f"Data Dir: {data_dir}\n")
 
     if args.dataset == "all":
-        targets = ["asvspoof2021", "inthewild", "wavefake"]
+        targets = ["asvspoof2021", "inthewild", "wavefake", "asvspoof5"]
     else:
         targets = [args.dataset]
 
@@ -426,7 +509,8 @@ def main():
             success &= download_inthewild(data_dir)
         if "wavefake" in targets:
             success &= download_wavefake(data_dir)
-
+        if "asvspoof5" in targets:
+            success &= download_asvspoof5(data_dir)
     if success:
         print("\nSUCCESS: All tasks finished.")
     else:
