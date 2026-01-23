@@ -4,4 +4,4 @@ cache/
 data/
 models/*
 !models/asvspoof2021_baseline/
-!models/rawnet2_asvspoof5/
+!models/asvspoof5/
