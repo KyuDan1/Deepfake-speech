@@ -1,0 +1,2 @@
+baseline_silhouette,ours_silhouette,baseline_silhouette_natural,baseline_silhouette_synthetic,ours_silhouette_natural,ours_silhouette_synthetic,n_natural,n_synthetic,n_train_total
+0.11846148,0.18054677589187287,0.23134977,0.0055731935,0.33516760331108414,0.02592594847266165,2580,2580,25380
