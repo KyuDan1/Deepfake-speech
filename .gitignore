@@ -1,5 +1,7 @@
 _results
 .vscode
+_cache/
+__pycache__/
 cache/
 data/
 models/*
